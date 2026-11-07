@@ -29,7 +29,9 @@ concurrency:
 jobs:
   ios:
     name: iOS arm64 (device)
-    runs-on: macos-14
+    # macos-14 (arm64) выведен из GitHub Actions 02.11.2026 -> "configuration ... is not supported".
+    # Актуальные arm64-лейблы: macos-15, macos-26, macos-latest.
+    runs-on: macos-15
     timeout-minutes: 30
     env:
       SERVER_IP: ${{ github.event.inputs.server_ip || '2.26.123.219' }}
@@ -42,6 +44,7 @@ jobs:
       - name: Toolchain
         run: |
           set -euo pipefail
+          echo "runner: ${ImageOS:-?} ${ImageVersion:-?} $(uname -m)"
           xcodebuild -version
           echo "SDK: $(xcrun --sdk iphoneos --show-sdk-path) ($(xcrun --sdk iphoneos --show-sdk-version))"
           echo "server_ip=$SERVER_IP dobby_ref=$DOBBY_REF ios_min=$IOS_MIN"
