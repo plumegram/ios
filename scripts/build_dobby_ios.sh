@@ -9,7 +9,7 @@ BUILD="$ROOT/build/dobby-ios"
 OUT="$ROOT/build/ios"
 
 REF="${DOBBY_REF:-master}"
-IOS_MIN="${IOS_MIN:-13.0}"
+IOS_MIN="${IOS_MIN:-12.0}"
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 
 SDK="$(xcrun --sdk iphoneos --show-sdk-path)"

@@ -17,7 +17,7 @@ on:
       ios_min:
         description: "Минимальная версия iOS"
         required: false
-        default: "13.0"
+        default: "12.0"
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
     env:
       SERVER_IP: ${{ github.event.inputs.server_ip || '2.26.123.219' }}
       DOBBY_REF: ${{ github.event.inputs.dobby_ref || 'master' }}
-      IOS_MIN: ${{ github.event.inputs.ios_min || '13.0' }}
+      IOS_MIN: ${{ github.event.inputs.ios_min || '12.0' }}
 
     steps:
       - uses: actions/checkout@v4

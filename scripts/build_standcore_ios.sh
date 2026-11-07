@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${OUT_DIR:-$ROOT/build/ios}"
 DOBBY_LIB="${DOBBY_LIB:-$OUT/libdobby.a}"
 SRC="$ROOT/standcore_ios.cpp"
-IOS_MIN="${IOS_MIN:-13.0}"
+IOS_MIN="${IOS_MIN:-12.0}"
 SERVER_IP="${SERVER_IP:-2.26.123.219}"
 
 if [ ! -f "$DOBBY_LIB" ]; then
