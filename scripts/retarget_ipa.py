@@ -87,6 +87,9 @@ def main():
     ap.add_argument("-i", "--ipa", required=True)
     ap.add_argument("-o", "--out", required=True)
     ap.add_argument("--min-ios", default="12.0", help="целевая минимальная версия, напр. 12.0")
+    ap.add_argument("--drop-key", action="append", default=None, metavar="KEY",
+                    help="удалить ключ из Info.plist (можно несколько раз), "
+                         "напр. UISupportedDevices")
     args = ap.parse_args()
 
     if os.path.abspath(args.ipa) == os.path.abspath(args.out):
@@ -114,6 +117,13 @@ def main():
         info["MinimumOSVersion"] = args.min_ios
         if "LSMinimumSystemVersion" in info:
             info["LSMinimumSystemVersion"] = args.min_ios
+
+        for key in (args.drop_key or []):
+            for k in [key, key + "~ipad", key + "~iphone"]:
+                if k in info:
+                    print("удаляю ключ %s = %s" % (k, info[k]))
+                    del info[k]
+
         new_plist = plistlib.dumps(
             info, fmt=plistlib.FMT_BINARY if is_binary else plistlib.FMT_XML, sort_keys=False)
 
