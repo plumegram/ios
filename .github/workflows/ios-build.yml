@@ -18,6 +18,10 @@ on:
         description: "Минимальная версия iOS"
         required: false
         default: "12.0"
+      tls_hook:
+        description: "1 = хукать TLS через Dobby, 0 = только подмена connect"
+        required: false
+        default: "1"
 
 permissions:
   contents: read
@@ -37,6 +41,7 @@ jobs:
       SERVER_IP: ${{ github.event.inputs.server_ip || '2.26.123.219' }}
       DOBBY_REF: ${{ github.event.inputs.dobby_ref || 'master' }}
       IOS_MIN: ${{ github.event.inputs.ios_min || '12.0' }}
+      TLS_HOOK: ${{ github.event.inputs.tls_hook || '1' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -47,7 +52,7 @@ jobs:
           echo "runner: ${ImageOS:-?} ${ImageVersion:-?} $(uname -m)"
           xcodebuild -version
           echo "SDK: $(xcrun --sdk iphoneos --show-sdk-path) ($(xcrun --sdk iphoneos --show-sdk-version))"
-          echo "server_ip=$SERVER_IP dobby_ref=$DOBBY_REF ios_min=$IOS_MIN"
+          echo "server_ip=$SERVER_IP dobby_ref=$DOBBY_REF ios_min=$IOS_MIN tls_hook=$TLS_HOOK"
 
       - name: Build Dobby (static, iOS arm64)
         run: bash scripts/build_dobby_ios.sh
@@ -62,12 +67,21 @@ jobs:
           lipo -info "$BIN"
           otool -L "$BIN"
           otool -l "$BIN" | grep -A2 LC_BUILD_VERSION || true
-          nm -g "$BIN" | grep -q ' T _DobbyHook' && echo "OK: Dobby слинкован"
-          if nm -u "$BIN" | grep -qi dobby; then
-            echo "!! неразрешённые символы Dobby — процесс упадёт на первом вызове:"
-            nm -u "$BIN" | grep -i dobby
+          if [ "$TLS_HOOK" != "0" ]; then
+            nm -g "$BIN" | grep -q ' T _DobbyHook' && echo "OK: Dobby слинкован"
+            if nm -u "$BIN" | grep -qi dobby; then
+              echo "!! неразрешённые символы Dobby — процесс упадёт на первом вызове:"
+              nm -u "$BIN" | grep -i dobby
+              exit 1
+            fi
+          fi
+          # подмена connect живёт в __DATA,__interpose (dyld), кода не патчим
+          INTERPOSE="$(otool -s __DATA __interpose "$BIN" 2>/dev/null | grep -E '^[0-9a-f]{8}' | head -2)"
+          if [ -z "$INTERPOSE" ]; then
+            echo "!! нет секции __DATA,__interpose — подмена connect не сработает"
             exit 1
           fi
+          echo "$INTERPOSE"
           codesign -dv "$BIN" 2>&1 | head -5 || true
 
       - name: Upload artifacts

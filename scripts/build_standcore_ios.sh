@@ -9,6 +9,11 @@ DOBBY_LIB="${DOBBY_LIB:-$OUT/libdobby.a}"
 SRC="$ROOT/standcore_ios.cpp"
 IOS_MIN="${IOS_MIN:-12.0}"
 SERVER_IP="${SERVER_IP:-2.26.123.219}"
+# TLS_HOOK=0 -> собрать вариант без Dobby-хуков (только подмена connect).
+# Нужно, чтобы отделить проблемы dyld/подписи от inline-хуков на стоковой iOS.
+TLS_HOOK="${TLS_HOOK:-1}"
+DEFS=""
+[ "$TLS_HOOK" = "0" ] && DEFS="-DSC_NO_TLS_HOOK"
 
 if [ ! -f "$DOBBY_LIB" ]; then
   echo "!! нет $DOBBY_LIB — сначала запусти scripts/build_dobby_ios.sh"
@@ -29,6 +34,7 @@ echo "==> compiling standcore.dylib (server=$SERVER_IP, min iOS=$IOS_MIN)"
   -Wall -Wno-unused-parameter -Wno-cast-function-type \
   -I "$OUT/include" \
   -DSC_SERVER_IP_OVERRIDE="\"$SERVER_IP\"" \
+  $DEFS \
   -dynamiclib \
   -install_name "@executable_path/Frameworks/standcore.dylib" \
   -Wl,-undefined,dynamic_lookup \

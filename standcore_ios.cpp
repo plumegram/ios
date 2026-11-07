@@ -5,13 +5,15 @@
 //   iOS:     __attribute__((constructor)) + UnityFramework + app container + stderr/log-файл
 //
 // Таргет: Standoff 2 iOS 0.22.0 (build 2090), arm64, image = UnityFramework
-// Сборка: scripts/build_standcore_ios.sh -> standcore.dylib
 //
-// Что делает:
-//   1. хукает connect() и переписывает IPv4 назначения на SC_SERVER_IP
-//      (порты 80/443/8080 и приватные/гугловые адреса не трогает)
-//   2. обнуляет результат проверки сертификата в Mono.Unity (UnityTLS),
-//      чтобы клиент не отваливался на pinning от приватного сервера
+// ВАЖНО (iOS 26, стоковая прошивка): inline-хук системной функции через Dobby
+// убивает процесс. Dobby патчит страницу libsystem_kernel, где лежит connect;
+// страница становится "грязной", ядро помечает её как invalid page
+// (CODESIGNING / Invalid Page), и любое исполнение в этой странице — включая
+// соседний __write_nocancel — падает с KERN_PROTECTION_FAILURE.
+// Поэтому connect подменяется через dyld interposing (__DATA,__interpose):
+// это правка таблицы символов, а не кода, и подпись страниц не трогается.
+// Dobby остаётся только для хуков внутри UnityFramework (код приложения).
 
 #include <arpa/inet.h>
 #include <dlfcn.h>
@@ -40,6 +42,8 @@
 static const char *const SC_SERVER_IP = SC_SERVER_IP_OVERRIDE;
 
 // ============================ logging ============================
+// Порядок важен: сначала файл, потом stderr. Если stderr окажется недоступен
+// (например, страница libc испорчена чьим-то патчем), в файле уже будет запись.
 
 static char g_log_path[512] = {0};
 
@@ -67,7 +71,6 @@ static void sc_log(const char *fmt, ...) {
     char line[896];
     snprintf(line, sizeof(line), "[%02d:%02d:%02d] %s\n", tmv.tm_hour, tmv.tm_min, tmv.tm_sec, msg);
 
-    fputs(line, stderr);  // видно в Console.app / idevicesyslog
     if (g_log_path[0]) {
         FILE *f = fopen(g_log_path, "a");
         if (f) {
@@ -75,6 +78,7 @@ static void sc_log(const char *fmt, ...) {
             fclose(f);
         }
     }
+    fputs(line, stderr);  // видно в Console.app / idevicesyslog
 }
 
 // ============================ connect hook ============================
@@ -92,10 +96,18 @@ static bool is_private_or_google(uint32_t be_addr) {
     return false;
 }
 
-static int (*orig_connect)(int, const struct sockaddr *, socklen_t) = nullptr;
+typedef int (*connect_fn)(int, const struct sockaddr *, socklen_t);
+static connect_fn sc_orig_connect = nullptr;
 
-static int hook_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
-    if (!orig_connect) return -1;
+static int sc_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
+    if (!sc_orig_connect) {
+        // RTLD_NEXT — следующее определение после нас, то есть настоящий libsystem
+        sc_orig_connect = (connect_fn)dlsym(RTLD_NEXT, "connect");
+        if (!sc_orig_connect) {
+            sc_log("не нашёл оригинальный connect");
+            return -1;
+        }
+    }
 
     if (addr && addr->sa_family == AF_INET) {
         const struct sockaddr_in *in = (const struct sockaddr_in *)addr;
@@ -106,21 +118,33 @@ static int hook_connect(int sockfd, const struct sockaddr *addr, socklen_t addrl
         // HTTP/HTTPS не трогаем: обновления, конфиги, аналитика — им нужен настоящий интернет
         if (port == 80 || port == 443 || port == 8080) {
             sc_log("connect %s:%d  (web, пропущен)", ip, port);
-            return orig_connect(sockfd, addr, addrlen);
+            return sc_orig_connect(sockfd, addr, addrlen);
         }
         if (!is_private_or_google(in->sin_addr.s_addr)) {
             struct sockaddr_in patched;
             memcpy(&patched, in, sizeof(patched));
             inet_pton(AF_INET, SC_SERVER_IP, &patched.sin_addr);
             sc_log("connect %s:%d  ->  %s:%d (redirect)", ip, port, SC_SERVER_IP, port);
-            return orig_connect(sockfd, (const struct sockaddr *)&patched, addrlen);
+            return sc_orig_connect(sockfd, (const struct sockaddr *)&patched, addrlen);
         }
         sc_log("connect %s:%d  (пропущен)", ip, port);
     } else if (addr && addr->sa_family == AF_INET6) {
         sc_log("connect ipv6 (пропущен)");
     }
-    return orig_connect(sockfd, addr, addrlen);
+    return sc_orig_connect(sockfd, addr, addrlen);
 }
+
+// dyld interposing: dyld сам перенаправит вызовы connect из образов,
+// загруженных после нас (главный бинарник + UnityFramework). Код не патчится.
+struct sc_interpose_pair {
+    const void *replacement;
+    const void *original;
+};
+__attribute__((used, section("__DATA,__interpose")))
+static const struct sc_interpose_pair sc_interpose_connect = {
+    (const void *)&sc_connect,
+    (const void *)&connect,
+};
 
 // ============================ TLS pinning bypass ============================
 
@@ -214,37 +238,31 @@ static void install_tls_bypass(void) {
 // ============================ entry ============================
 
 static void *sc_worker(void *) {
-    sc_open_log();
-
     char exe[512] = {0};
     uint32_t sz = sizeof(exe);
     _NSGetExecutablePath(exe, &sz);
 
-    sc_log("=== StandCore(iOS) loaded, pid=%d ===", (int)getpid());
+    sc_log("=== worker start, pid=%d ===", (int)getpid());
     sc_log("exe=%s", exe);
     sc_log("server=%s", SC_SERVER_IP);
+    sc_log("connect подменён через __DATA,__interpose");
 
-    // connect может быть и в libsystem_kernel, и в libsystem_c — пробуем оба пути
-    void *sym = dlsym(RTLD_DEFAULT, "connect");
-    if (!sym) sym = DobbySymbolResolver("libsystem_kernel.dylib", "connect");
-    if (!sym) sym = DobbySymbolResolver("libsystem_c.dylib", "connect");
-
-    if (!sym) {
-        sc_log("connect не найден");
-    } else if (DobbyHook(sym, (void *)hook_connect, (void **)&orig_connect) == 0) {
-        sc_log("хук connect установлен @ %p", sym);
-    } else {
-        sc_log("не удалось поставить хук connect @ %p", sym);
-    }
-
+#ifdef SC_NO_TLS_HOOK
+    sc_log("TLS-хуки отключены при сборке (SC_NO_TLS_HOOK)");
+#else
     install_tls_bypass();
+#endif
     sc_log("=== init done ===");
     return nullptr;
 }
 
 __attribute__((constructor)) static void sc_ctor(void) {
-    // конструктор выполняется очень рано: хуки ставим из отдельного потока,
-    // чтобы не тормозить (и не падать) в момент загрузки dylib
+    // конструктор выполняется очень рано: сначала отметка в логе (если процесс
+    // умрёт в потоке, будет видно, что dylib всё-таки загрузилась), потом поток
+    sc_open_log();
+    sc_log("=== StandCore(iOS) ctor, pid=%d ===", (int)getpid());
+
     pthread_t t;
     if (pthread_create(&t, nullptr, sc_worker, nullptr) == 0) pthread_detach(t);
+    else sc_log("не удалось создать поток");
 }
