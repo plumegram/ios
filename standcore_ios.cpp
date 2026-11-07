@@ -220,8 +220,9 @@ static void *sc_worker(void *) {
     uint32_t sz = sizeof(exe);
     _NSGetExecutablePath(exe, &sz);
 
-    sc_log("=== StandCore(iOS) loaded, pid=%d, exe=%s ===", (int)getpid(), exe);
-    sc_log("dobby=%s, server=%s", DobbyGetVersion(), SC_SERVER_IP);
+    sc_log("=== StandCore(iOS) loaded, pid=%d ===", (int)getpid());
+    sc_log("exe=%s", exe);
+    sc_log("server=%s", SC_SERVER_IP);
 
     // connect может быть и в libsystem_kernel, и в libsystem_c — пробуем оба пути
     void *sym = dlsym(RTLD_DEFAULT, "connect");

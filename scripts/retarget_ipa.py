@@ -26,6 +26,12 @@ import struct
 import sys
 import zipfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from inject_dylib import patch_macho as add_load_command
+except Exception:  # inject_dylib рядом не обязателен, если не просили --inject
+    add_load_command = None
+
 MH_MAGIC_64 = 0xFEEDFACF
 LC_SEGMENT_64 = 0x19
 LC_VERSION_MIN_IPHONEOS = 0x25
@@ -90,6 +96,9 @@ def main():
     ap.add_argument("--drop-key", action="append", default=None, metavar="KEY",
                     help="удалить ключ из Info.plist (можно несколько раз), "
                          "напр. UISupportedDevices")
+    ap.add_argument("--inject", default=None, metavar="DYLIB",
+                    help="заодно вшить dylib в Frameworks/ и добавить LC_LOAD_DYLIB")
+    ap.add_argument("--inject-name", default=None, help="имя dylib внутри Frameworks/")
     args = ap.parse_args()
 
     if os.path.abspath(args.ipa) == os.path.abspath(args.out):
@@ -144,11 +153,36 @@ def main():
         if not to_patch:
             print("  Mach-O править не нужно: все уже <= %s" % args.min_ios)
 
+        # опционально: заодно вшить dylib (одним проходом, без второго архива)
+        dest = None
+        if args.inject:
+            if add_load_command is None:
+                raise SystemExit("рядом нет inject_dylib.py — не могу вшить dylib")
+            with open(args.inject, "rb") as f:
+                inject_bytes = f.read()
+            inject_name = args.inject_name or os.path.basename(args.inject)
+            dest = prefix + "Frameworks/" + inject_name
+            exe_path = prefix + info["CFBundleExecutable"]
+            if exe_path not in zin.namelist():
+                raise SystemExit("не нашёл исполняемый файл %s" % exe_path)
+            exe_data = to_patch.get(exe_path) or zin.read(exe_path)
+            print("вшиваю %s (%d байт) -> %s"
+                  % (inject_name, len(inject_bytes), dest.split(prefix)[1]))
+            patched, changed = add_load_command(
+                exe_data, "@executable_path/Frameworks/" + inject_name)
+            to_patch[exe_path] = patched
+            if not changed:
+                print("  LC_LOAD_DYLIB уже был")
+            if dest in zin.namelist():
+                print("  %s уже есть в бандле — перезапишу" % inject_name)
+
         print("пересборка архива (%d записей)..." % len(zin.infolist()))
         with zipfile.ZipFile(args.out, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as zout:
             for i, item in enumerate(zin.infolist(), 1):
                 if item.is_dir():
                     zout.writestr(item, b"")
+                elif dest and item.filename == dest:
+                    continue  # запишем ниже, свежий файл
                 elif item.filename == plist_path:
                     zout.writestr(item, new_plist)
                 elif item.filename in to_patch:
@@ -158,6 +192,12 @@ def main():
                         shutil.copyfileobj(src, dst, 1 << 20)
                 if i % 200 == 0:
                     print("  %d/%d" % (i, len(zin.infolist())), flush=True)
+
+            if dest:
+                zi = zipfile.ZipInfo(dest)
+                zi.external_attr = 0o755 << 16
+                zi.compress_type = zipfile.ZIP_DEFLATED
+                zout.writestr(zi, inject_bytes)
 
     print("готово: %s (%.1f МБ)" % (args.out, os.path.getsize(args.out) / 1048576))
     print("подпись сброшена — нужна переподпись при установке")

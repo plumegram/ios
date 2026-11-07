@@ -44,4 +44,15 @@ echo "==> ok: $OUT/standcore.dylib"
 lipo -info "$OUT/standcore.dylib"
 echo "--- Dobby symbols ---"
 # -g = только внешние символы; Dobby должен быть определён (T), а не undefined
-nm -g "$OUT/standcore.dylib" | grep -E ' T _Dobby' || echo "!! Dobby не слинковался"
+nm -g "$OUT/standcore.dylib" | grep -E ' T _Dobby' || { echo "!! Dobby не слинковался"; exit 1; }
+
+# Заголовок Dobby объявляет функции, которых в собранной .a может не быть
+# (например DobbyGetVersion). С -Wl,-undefined,dynamic_lookup такая ссылка
+# проходит линковку молча и убивает процесс на первом вызове, поэтому
+# неразрешённые символы Dobby — это ошибка сборки, а не предупреждение.
+if UNDEF="$(nm -u "$OUT/standcore.dylib" | grep -i dobby)"; then
+  echo "!! неразрешённые символы Dobby (их нет в libdobby.a):"
+  echo "$UNDEF"
+  exit 1
+fi
+echo "undefined symbols: $(nm -u "$OUT/standcore.dylib" | wc -l | tr -d ' ') (все из libSystem/libc++)"

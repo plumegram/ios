@@ -63,6 +63,11 @@ jobs:
           otool -L "$BIN"
           otool -l "$BIN" | grep -A2 LC_BUILD_VERSION || true
           nm -g "$BIN" | grep -q ' T _DobbyHook' && echo "OK: Dobby слинкован"
+          if nm -u "$BIN" | grep -qi dobby; then
+            echo "!! неразрешённые символы Dobby — процесс упадёт на первом вызове:"
+            nm -u "$BIN" | grep -i dobby
+            exit 1
+          fi
           codesign -dv "$BIN" 2>&1 | head -5 || true
 
       - name: Upload artifacts
