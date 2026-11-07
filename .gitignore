@@ -1,0 +1,20 @@
+# сборка
+build/
+*.o
+*.dylib
+*.dSYM/
+libs/arm64-v8a/
+libs/armeabi-v7a/
+obj/
+.externalNativeBuild/
+.cxx/
+
+# macOS
+.DS_Store
+
+# локальные данные ассистента / заметки по проекту
+.workbuddy-ai/
+
+# дамп игры: ~200 MB бинарей, в git его держать не надо
+# (UnityFramework, global-metadata.dat, script.json, dump.cs)
+dump_0.22.0/

@@ -1,0 +1,74 @@
+name: ios-build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      server_ip:
+        description: "IP сервера, на который редиректим connect()"
+        required: false
+        default: "2.26.123.219"
+      dobby_ref:
+        description: "Dobby ref (branch / tag / commit)"
+        required: false
+        default: "master"
+      ios_min:
+        description: "Минимальная версия iOS"
+        required: false
+        default: "13.0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    name: iOS arm64 (device)
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      SERVER_IP: ${{ github.event.inputs.server_ip || '2.26.123.219' }}
+      DOBBY_REF: ${{ github.event.inputs.dobby_ref || 'master' }}
+      IOS_MIN: ${{ github.event.inputs.ios_min || '13.0' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          echo "SDK: $(xcrun --sdk iphoneos --show-sdk-path) ($(xcrun --sdk iphoneos --show-sdk-version))"
+          echo "server_ip=$SERVER_IP dobby_ref=$DOBBY_REF ios_min=$IOS_MIN"
+
+      - name: Build Dobby (static, iOS arm64)
+        run: bash scripts/build_dobby_ios.sh
+
+      - name: Build standcore.dylib
+        run: bash scripts/build_standcore_ios.sh
+
+      - name: Verify
+        run: |
+          set -euo pipefail
+          BIN=build/ios/standcore.dylib
+          lipo -info "$BIN"
+          otool -L "$BIN"
+          otool -l "$BIN" | grep -A2 LC_BUILD_VERSION || true
+          nm -g "$BIN" | grep -q ' T _DobbyHook' && echo "OK: Dobby слинкован"
+          codesign -dv "$BIN" 2>&1 | head -5 || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: standcore-ios-${{ github.sha }}
+          path: |
+            build/ios/standcore.dylib
+            build/ios/libdobby.a
+            build/ios/include/dobby.h
+          if-no-files-found: error
+          retention-days: 30

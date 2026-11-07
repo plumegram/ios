@@ -1,0 +1,15 @@
+# shell/yaml — только LF, иначе на macOS-раннере скрипты падают с "bad interpreter"
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.mk   text eol=lf
+
+# исходники
+*.c   text
+*.cc  text
+*.cpp text
+*.h   text
+
+# пребилды — не трогаем
+*.a    binary
+*.dylib binary
